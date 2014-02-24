@@ -311,11 +311,16 @@ handle_cast(_Msg, State) ->
 %%                                       {stop, Reason, State}
 %% Description: Handling all non call/cast messages
 %%--------------------------------------------------------------------
-handle_info({'DOWN', MonitorRef, _, _, _}, State) ->
+handle_info({'DOWN', MonitorRef, _, Pid, _}, State) ->
 	case dict:find(MonitorRef, State#state.lockers) of
 		{ok, {PoolId, ConnId}} ->
 			case find_pool(PoolId, State#state.pools) of
-				{Pool, _} ->
+				{Pool, OtherPools} ->
+					%% Make sure Pid is not in the wait queue either, by killing it if it is
+					QueueNow = queue:filter(fun(PidX) -> PidX /= Pid end, Pool#pool.waiting),
+					PoolNow = Pool#pool { waiting = QueueNow },
+					NewState = State#state { pools = [PoolNow, OtherPools ]},
+
 					case gb_trees:lookup(ConnId, Pool#pool.locked) of
 						{value, Conn} -> async_reset_conn(State#state.pools, Conn);
 						_             -> ok
@@ -326,7 +331,7 @@ handle_info({'DOWN', MonitorRef, _, _, _}, State) ->
 		_ ->
 			ok
 	end,
-    {noreply, State};
+    {noreply, NewState};
 
 handle_info(_Info, State) ->
     {noreply, State}.
